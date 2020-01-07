@@ -93,10 +93,12 @@ local entity_classes = {
         pal(2, 1)
       end
       sspr(y > 90 and 0 or 12, 0, 12, 19, x, y, 12, 19, x > 64)
+      self.visual_x = x
+      self.visual_y = y
     end,
     is_valid_move = function(self, stair, segment)
       local other_shoe = shoes[3 - self.player_num]
-      return stair and segment and (stair != other_shoe.stair or segment != other_shoe.segment) and 1 <= stair and stair <= 2 and 1 <= segment and segment <= 6 and other_shoe.segment - 2 <= segment and segment <= other_shoe.segment + 2
+      return stair and segment and (stair != other_shoe.stair or segment != other_shoe.segment) and 1 <= stair and stair <= 2 and 1 <= segment and segment <= 6 and other_shoe.segment - 3 <= segment and segment <= other_shoe.segment + 3
     end,
     set_state = function(self, state)
       self.state = state
@@ -110,6 +112,99 @@ local entity_classes = {
       local ending_stair_position = stair_positions[self.stair][self.segment]
       self.offset_x = ending_stair_position.x - starting_stair_position.x
       self.offset_y = ending_stair_position.y - starting_stair_position.y
+    end
+  },
+  shoe_string = {
+    render_layer = 6,
+    init = function(self)
+      self.points = {}
+      local prev_point
+      for i = 1, 11 do
+        local point = self:add_point()
+        if prev_point then
+          add(prev_point.connections, point)
+          add(point.connections, prev_point)
+        end
+        prev_point = point
+      end
+      self.shoe_points = { self.points[1], self.points[#self.points] }
+      local mid_point = self.points[6]
+      for bias = -1, 1, 2 do
+        prev_point = mid_point
+        for i = 1, 3 do
+          local point = self:add_point(bias)
+          if prev_point then
+            if prev_point != mid_point then
+              add(prev_point.connections, point)
+            end
+            add(point.connections, prev_point)
+          end
+          prev_point = point
+        end
+      end
+    end,
+    update = function(self)
+      for point in all(self.points) do
+        for other_point in all(point.connections) do
+          self:accelerate_point_towards(point, other_point.x, other_point.y)
+        end
+      end
+      -- apply point velocity
+      for point in all(self.points) do
+        if point.bias then
+          point.vx += point.bias / 10
+          point.vy += 0.4
+        else
+          point.vy += 0.8 - 0.22 * abs(shoes[1].segment - shoes[2].segment)
+        end
+        point.vx = mid(-5, point.vx, 5)
+        point.vy = mid(-5, point.vy, 5)
+        point.x += point.vx
+        point.y += point.vy
+        point.vx *= 0.87
+        point.vy *= 0.87
+      end
+      -- move shoe points to shoes
+      for p = 1, 2 do
+        if shoes[p].visual_x and shoes[p].visual_y then
+          self.shoe_points[p].x = shoes[p].visual_x + 5.5
+          self.shoe_points[p].y = shoes[p].visual_y + 4.5
+          self.shoe_points[p].vx = 0
+          self.shoe_points[p].vy = 0
+        end
+      end
+    end,
+    draw = function(self)
+      for point in all(self.points) do
+        -- pset(point.x, point.y, 14)
+        for other_point in all (point.connections) do
+          line(point.x, point.y, other_point.x, other_point.y, 7)
+        end
+      end
+    end,
+    add_point = function(self, bias)
+      local point = {
+        x = 64,
+        y = 64,
+        vx = 0,
+        vy = 0,
+        bias = bias,
+        connections = {}
+      }
+      add(self.points, point)
+      return point
+    end,
+    accelerate_point_towards = function(self, point, x, y)
+      local dx = x - point.x
+      local dy = y - point.y
+      local square_dist = dx * dx + dy * dy
+      local dist = sqrt(square_dist)
+      if dist > 2 then
+        point.vx += 0.95 * (dist - 2) * dx / dist
+        point.vy += 0.95 * (dist - 2) * dy / dist
+      end
+      -- point.x = 0.9 * point.x + 0.1 * x
+      -- point.y = 0.9 * point.y + 0.1 * y
     end
   },
   gem = {
@@ -128,6 +223,7 @@ local entity_classes = {
     end
   },
   stair_text = {
+    render_layer = 3,
     color = 7,
     segment = 3,
     draw = function(self, x, y)
@@ -184,6 +280,7 @@ function _init()
     stair = 2,
     color = 12
   })
+  spawn_entity("shoe_string", {})
 end
 
 function _update()
@@ -216,7 +313,9 @@ function _update()
     stair_offset_y = 127
     steps += 1
     for entity in all(entities) do
-      entity.stair -= 1
+      if entity.stair then
+        entity.stair -= 1
+      end
     end
   end
 
@@ -230,6 +329,9 @@ function _update()
   filter_list(entities, function(entity)
     return entity.is_alive
   end)
+
+  -- sort entities for rendering
+  sort_list(entities, is_rendered_on_top_of)
 end
 
 function _draw()
@@ -309,7 +411,9 @@ function _draw()
 
   -- draw entities
   for entity in all(entities) do
-    if stair_positions[entity.stair] then
+    if not entity.stair then
+      entity:draw(0, 0)
+    elseif stair_positions[entity.stair] then
       local position = stair_positions[entity.stair][entity.segment]
       local x, y = position.x, position.y
       pal()
@@ -362,6 +466,18 @@ function filter_list(list, func)
   end
 end
 
+-- bubble sorts a list
+function sort_list(list, func)
+  local i
+  for i=1, #list do
+    local j = i
+    while j > 1 and func(list[j - 1], list[j]) do
+      list[j], list[j - 1] = list[j - 1], list[j]
+      j -= 1
+    end
+  end
+end
+
 -- spawns an instance of the given entity class
 function spawn_entity(class_name, args, skip_init)
   local class_def = entity_classes[class_name]
@@ -371,15 +487,14 @@ function spawn_entity(class_name, args, skip_init)
   else
     -- create a default entity
     entity = {
+      render_layer = 5,
       -- life cycle vars
       is_alive = true,
       frames_alive = 0,
       -- functions
       init = noop,
       update = noop,
-      -- draw functions
       draw = noop,
-      -- life cycle functions
       despawn = function(self)
         if self.is_alive then
           self.is_alive = false
@@ -444,6 +559,11 @@ function smallcaps(s)
     end
   end
   return d
+end
+
+-- returns true if a is rendered on top of b
+function is_rendered_on_top_of(a, b)
+  return (a.render_layer == b.render_layer) and (a.stair < b.stair) or (a.render_layer > b.render_layer)
 end
 
 function draw_text(text, x, y, size, dry_run)
