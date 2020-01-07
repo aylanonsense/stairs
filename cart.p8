@@ -2,6 +2,9 @@ pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
 
+-- useful no-op function
+function noop() end
+
 -- constants
 local controllers = { 1, 0 }
 
@@ -9,53 +12,97 @@ local controllers = { 1, 0 }
 local buttons
 local button_presses
 
--- game vars
+-- render vars
 local stair_offset_y
+local stair_positions
+
+-- entity vars
 local entities
 local shoes
+local entity_classes = {
+  shoe = {
+    player_num = nil,
+    state = "ready",
+    state_frames = 0,
+    offset_x = 0,
+    offset_y = 0,
+    init = function(self)
+    end,
+    update = function(self)
+      local other_shoe = shoes[3 - self.player_num]
+      -- press keys to step up stairs
+      if stair_positions and self.state == "ready" then
+        local stair
+        local segment
+        -- move up
+        if btnp2(2, self.player_num) then
+          stair, segment = self.stair + 1, self.segment
+        -- move up + right
+        elseif btnp2(1, self.player_num) then
+          stair, segment = self.stair + 1, self.segment + 1
+        -- move up + left
+        elseif btnp2(0, self.player_num) then
+          stair, segment = self.stair + 1, self.segment - 1
+        -- move down
+        elseif btnp2(3, self.player_num) then
+          stair, segment = self.stair - 1, self.segment
+        end
+        -- actually initiate the move
+        if self:is_valid_move(stair, segment) then
+          self:step(stair, segment)
+        end
+      end
+      -- animate stepping up stairs
+      if self.state == "stepping" then
+        self.offset_x = (self.offset_x < 0 and -1 or 1) * max(0, abs(self.offset_x) - 4)
+        self.offset_y = (self.offset_y < 0 and -1 or 1) * max(0, abs(self.offset_y) - 4)
+        -- finish step
+        if self.offset_x == 0 and self.offset_y == 0 then
+          self:set_state("ready")
+        end
+      end
+    end,
+    draw = function(self, x, y)
+      spr(1, x - 3.5 - self.offset_x, y - 7.5 - self.offset_y)
+      pset(x, y, 8)
+    end,
+    is_valid_move = function(self, stair, segment)
+      local other_shoe = shoes[3 - self.player_num]
+      return stair and segment and (stair != other_shoe.stair or segment != other_shoe.segment) and 1 <= stair and stair <= 2 and 1 <= segment and segment <= 6 and other_shoe.segment - 2 <= segment and segment <= other_shoe.segment + 2
+    end,
+    set_state = function(self, state)
+      self.state = state
+      self.state_frames = 0
+    end,
+    step = function(self, stair, segment)
+      self:set_state("stepping")
+      local starting_stair_position = stair_positions[self.stair][self.segment]
+      self.stair = stair
+      self.segment = segment
+      local ending_stair_position = stair_positions[self.stair][self.segment]
+      self.offset_x = ending_stair_position.x - starting_stair_position.x
+      self.offset_y = ending_stair_position.y - starting_stair_position.y
+    end
+  }
+}
 
 function _init()
   buttons = { {}, {} }
   button_presses = { {}, {} }
   stair_offset_y = 147
-  entities = {
-    {
-      type = "shoe",
-      player_number = 1,
+  entities = {}
+  shoes = {
+    spawn_entity("shoe", {
+      player_num = 1,
       stair = 1,
       segment = 3
-    },
-    {
-      type = "shoe",
-      player_number = 2,
+    }),
+    spawn_entity("shoe", {
+      player_num = 2,
       stair = 1,
       segment = 4
-    },
-    {
-      stair = 7,
-      segment = 1
-    },
-    {
-      stair = 7,
-      segment = 2
-    },
-    {
-      stair = 7,
-      segment = 3
-    },
-    {
-      stair = 7,
-      segment = 4
-    },
-    {
-      stair = 7,
-      segment = 5
-    },
-    { stair = 7,
-      segment = 6
-    }
+    })
   }
-  shoes = { entities[1], entities[2] }
 end
 
 function _update()
@@ -69,6 +116,7 @@ function _update()
     end
   end
 
+  -- scroll stairs
   if (shoes[1].stair > 1 and shoes[2].stair > 1) or stair_offset_y < 147 then
     stair_offset_y = stair_offset_y + 4
   end
@@ -79,11 +127,16 @@ function _update()
     end
   end
 
-  for p = 1, 2 do
-    if btnp2(2, p) then
-      shoes[p].stair = shoes[p].stair + 1
-    end
+  -- update each entity
+  for entity in all(entities) do
+    entity.frames_alive = entity.frames_alive + 1
+    entity:update()
   end
+
+  -- remove dead entities
+  filter_list(entities, function(entity)
+    return entity.is_alive
+  end)
 end
 
 function _draw()
@@ -95,8 +148,8 @@ function _draw()
     line(x + (x > 64 and 1 or 0), 0, x + (x > 64 and 1 or 0), 128, 2)
   end
 
-  -- draw the stairs
-  local stair_positions = {}
+  -- draw the stairs and record their visual positions
+  stair_positions = {}
   local width, rise_left = calc_stair_size(stair_offset_y)
   local bottom_width, bottom_y
   for y = flr(stair_offset_y), 0, -1 do
@@ -166,8 +219,7 @@ function _draw()
     if stair_positions[entity.stair] then
       local position = stair_positions[entity.stair][entity.segment]
       local x, y = position.x, position.y
-      spr(1, x - 3.5, y - 7.5)
-      pset(x, y, 8)
+      entity:draw(x, y)
     end
   end
 
@@ -190,6 +242,63 @@ function btnp2(button_num, player_num, consume_press)
     end
     return true
   end
+end
+
+-- removes all items in the list that don't pass the criteria func
+function filter_list(list, func)
+  local item
+  for item in all(list) do
+    if not func(item) then
+      del(list, item)
+    end
+  end
+end
+
+-- spawns an instance of the given entity class
+function spawn_entity(class_name, args, skip_init)
+  local class_def = entity_classes[class_name]
+  local entity
+  if class_def.extends then
+    entity = spawn_entity(class_def.extends, args, true)
+  else
+    -- create a default entity
+    entity = {
+      -- life cycle vars
+      is_alive = true,
+      frames_alive = 0,
+      -- functions
+      init = noop,
+      update = noop,
+      -- draw functions
+      draw = noop,
+      -- life cycle functions
+      despawn = function(self)
+        if self.is_alive then
+          self.is_alive = false
+          self:on_despawn()
+        end
+      end,
+      on_despawn = noop
+    }
+  end
+  -- add class-specific properties
+  entity.class_name = class_name
+  local key, value
+  for key, value in pairs(class_def) do
+    entity[key] = value
+  end
+  -- override with passed-in arguments
+  for key, value in pairs(args or {}) do
+    entity[key] = value
+  end
+  if not skip_init then
+    -- add it to the list of entities
+    add(entities, entity)
+    -- initialize the entitiy
+    entity:init()
+  end
+  -- return the new entity
+  return entity
 end
 
 __gfx__
