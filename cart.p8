@@ -6,6 +6,14 @@ __lua__
 function noop() end
 
 -- constants
+local level = {
+  [1] = { { "gem" } },
+  [2] = { { "text", "hello there" } },
+  [3] = { { "gem" } },
+  [5] = { { "gem" } },
+  [7] = { { "gem" } },
+  [9] = { { "gem" } }
+}
 local controllers = { 1, 0 }
 
 -- character lookup
@@ -176,7 +184,6 @@ local entity_classes = {
     end,
     draw = function(self)
       for point in all(self.points) do
-        -- pset(point.x, point.y, 14)
         for other_point in all (point.connections) do
           line(point.x, point.y, other_point.x, other_point.y, 7)
         end
@@ -203,8 +210,6 @@ local entity_classes = {
         point.vx += 0.95 * (dist - 2) * dx / dist
         point.vy += 0.95 * (dist - 2) * dy / dist
       end
-      -- point.x = 0.9 * point.x + 0.1 * x
-      -- point.y = 0.9 * point.y + 0.1 * y
     end
   },
   gem = {
@@ -256,31 +261,10 @@ function _init()
       segment = 4
     })
   }
-  spawn_entity("gem", {
-    stair = 3,
-    segment = 4
-  })
-  spawn_entity("stair_text", {
-    text = "do",
-    stair = 5,
-    color = 10
-  })
-  spawn_entity("stair_text", {
-    text = "the",
-    stair = 4,
-    color = 9
-  })
-  spawn_entity("stair_text", {
-    text = "love",
-    stair = 3,
-    color = 11
-  })
-  spawn_entity("stair_text", {
-    text = "thang",
-    stair = 2,
-    color = 12
-  })
   spawn_entity("shoe_string", {})
+  for i = 1, 5 do
+    load_level_step(i)
+  end
 end
 
 function _update()
@@ -317,6 +301,7 @@ function _update()
         entity.stair -= 1
       end
     end
+    load_level_step(steps + 5)
   end
 
   -- update each entity
@@ -437,6 +422,26 @@ function _draw()
   local timer_text = (timer_seconds < 10 and "0" or "") .. timer_seconds .. "." .. min(9, flr(10 * timer_frames / 30))
   print(timer_text, 62 - 2 * #timer_text, 4, 7)
   sspr(116, 118, 7, 7, 71, 3)
+end
+
+function load_level_step(step)
+  if level[step] then
+    for action in all(level[step]) do
+      local stair = step - steps
+      if action[1] == "gem" then
+        spawn_entity("gem", {
+          stair = stair,
+          segment = rnd_int(1, 6)
+        })
+      elseif action[1] == "text" then
+        spawn_entity("stair_text", {
+          text = action[2],
+          stair = stair,
+          color = action[3] or 7
+        })
+      end
+    end
+  end
 end
 
 function calc_stair_size(y)
