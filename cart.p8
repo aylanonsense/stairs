@@ -14,7 +14,7 @@ __lua__
 -- useful no-op function
 function noop() end
 
-local last_step = 3
+local last_step = 33 - 2
 local is_ending_game = false
 local game_end_countdown = 0
 local stair_color = 4
@@ -23,15 +23,31 @@ local stair_offcolor = 2
 -- constants
 local controllers = { 1, 0 }
 local level = {
-  [3] = { { "text", "to move" } },
-  -- [4] = { { "text", "use arrow keys" } },
-  -- [6] = { { "gem", 4, 1 } },
-  -- [8] = { { "text", "collect gems" } },
-  -- [9] = { { "gem", 2, 3 } },
+  [2] = { { "text", "arrows to move", 12 } },
+  [3] = { { "text", "esdf to move", 8 } },
+  [6] = { { "text", "collect gems" }, { "gem", 4, 3 } },
+  [7] = { { "gem", 2, 4 } },
+  [9] = { { "gem", 6, 2 } },
+  [11] = { { "gem", 2, 3 } },
   -- [11] = { { "gem", 5, 4 } },
-  -- [12] = { { "text", "get to the top" } },
+  [13] = { { "text", "keep going", 14 } },
+  [17] = { { "text", "thang", 12 } },
+  [18] = { { "text", "love", 11 } },
+  [19] = { { "text", "the", 9 } },
+  [20] = { { "text", "do", 10 } },
   -- [13] = { { "gem", false, 2 } },
-  [5] = { { "door" }, { "text", "will you marry me?", 7, true } }
+  [22] = { { "gem", 2, 1 }, { "gem", 5, 2 } },
+  [23] = { { "gem", 2, 1 }, { "gem", 5, 2 } },
+  [24] = { { "gem", 2, 1 }, { "gem", 5, 2 } },
+  [25] = { { "gem", 3, 1 }, { "gem", 4, 2 } },
+  [26] = { { "gem", 4, 1 }, { "gem", 3, 2 } },
+  [27] = { { "gem", 5, 1 }, { "gem", 2, 2 } },
+  [28] = { { "gem", 5, 1 }, { "gem", 2, 2 } },
+  [29] = { { "gem", 4, 1 }, { "gem", 3, 2 } },
+  [30] = { { "gem", 3, 1 }, { "gem", 4, 2 } },
+  [31] = { { "gem", 2, 1 }, { "gem", 5, 2 } },
+  [32] = { { "gem", 3, 1 }, { "gem", 4, 2 } },
+  [33] = { { "door" }, { "text", "will you marry me?", 7, true } }
 }
 
 -- character lookup
@@ -65,9 +81,9 @@ local entity_classes = {
     state_frames = 0,
     offset_x = 0,
     offset_y = 0,
-    init = function(self)
-    end,
+    warning_frames = 0,
     update = function(self)
+      self.warning_frames = max(0, self.warning_frames - 1)
       self.state_frames = self.state_frames + 1
       local other_shoe = shoes[3 - self.player_num]
       -- press keys to step up stairs
@@ -90,6 +106,9 @@ local entity_classes = {
         -- actually initiate the move
         if self:is_valid_move(stair, segment) then
           self:step(stair, segment)
+        elseif stair and segment and stair > self.stair then
+          self.string:show_warning()
+          self.warning_frames = 8
         end
       end
       -- animate stepping up stairs
@@ -129,7 +148,7 @@ local entity_classes = {
       else
         sprite = 2
       end
-      sspr(12 * (sprite - 1), 0, 12, 19, x, y, 12, 19, x > 64)
+      sspr(12 * (sprite - 1), 0, 12, 19, x + ((self.warning_frames > 0) and (2 * (self.warning_frames % 2) - 1) or 0), y, 12, 19, x > 64)
       self.visual_x = x
       self.visual_y = y
     end,
@@ -153,6 +172,7 @@ local entity_classes = {
   },
   shoe_string = {
     render_layer = 6,
+    warning_frames = 0,
     init = function(self)
       self.points = {}
       local prev_point
@@ -165,13 +185,13 @@ local entity_classes = {
         prev_point = point
       end
       self.shoe_points = { self.points[1], self.points[#self.points] }
-      local mid_point = self.points[6]
+      self.mid_point = self.points[6]
       for bias = -1, 1, 2 do
-        prev_point = mid_point
+        prev_point = self.mid_point
         for i = 1, 3 do
           local point = self:add_point(bias)
           if prev_point then
-            if prev_point != mid_point then
+            if prev_point != self.mid_point then
               add(prev_point.connections, point)
             end
             add(point.connections, prev_point)
@@ -210,12 +230,17 @@ local entity_classes = {
           self.shoe_points[p].vy = 0
         end
       end
+      self.warning_frames = max(0, self.warning_frames - 1)
     end,
     draw = function(self)
       for point in all(self.points) do
         for other_point in all (point.connections) do
-          line(point.x, point.y, other_point.x, other_point.y, 7)
+          line(point.x, point.y, other_point.x, other_point.y, self.warning_frames > 17 and 8 or 7)
         end
+      end
+      local x, y = self.mid_point.x, self.mid_point.y
+      if self.warning_frames % 6 >= 3 then
+        sspr(121, 58, 7, 10, x - 3, y - 4)
       end
     end,
     add_point = function(self, bias)
@@ -239,6 +264,9 @@ local entity_classes = {
         point.vx += 0.95 * (dist - 2) * dx / dist
         point.vy += 0.95 * (dist - 2) * dy / dist
       end
+    end,
+    show_warning = function(self)
+      self.warning_frames = 25
     end
   },
   gem = {
@@ -343,19 +371,21 @@ function _init()
   timer_seconds = 45
   timer_frames = 0
   entities = {}
+  local string = spawn_entity("shoe_string", {})
   shoes = {
     spawn_entity("shoe", {
       player_num = 1,
       stair = 1,
-      segment = 3
+      segment = 3,
+      string = string
     }),
     spawn_entity("shoe", {
       player_num = 2,
       stair = 1,
-      segment = 4
+      segment = 4,
+      string = string
     })
   }
-  spawn_entity("shoe_string", {})
   for i = 1, 5 do
     load_level_step(i)
   end
@@ -748,7 +778,7 @@ function draw_text(text, x, y, size, dry_run)
           end
         end
         local gap = spr_width
-        if size <= 3 then
+        if true then -- size <= 3 then
           spr_y -= 9
           if n ~= 9 and n~= 13 and n ~= 14 and n ~= 23 and (size ~= 3 or (n ~= 20 and n ~= 25)) then
             gap -= 1
@@ -825,16 +855,16 @@ __gfx__
 07770077770007770077770007770077777777077077077077000777707707700777777700777700000000000000000000000000000000000000000000000000
 77777077777077777077777077777077777777077077077077000777707707700777777700777700000000000000000000000000000000000000000000000000
 77077077077077077077077077000000770077077077077077070777777707700770077700007700000000000000000000000000000000000000000000000000
-77077077777077077077777007770000770077077077077077777770777007777770777000077700000000000000000000000000000000000000000000000000
-77077077770077070077770000077000770077077077777077777777777700777707770000077000000000000000000000000000000000000000000000000000
-77777077000077777077077077777000770077777007770077707777707700077007777700000000000000000000000000000000000000000000000000000000
-07770077000007777077077007770000770007770000700077000777707700077007777700077000000000000000000000000000000000000000000000000000
+77077077777077077077777007770000770077077077077077777770777007777770777000077700000000000000000000000000000000000000000000008000
+77077077770077070077770000077000770077077077777077777777777700777707770000077000000000000000000000000000000000000000000000008000
+77777077000077777077077077777000770077777007770077707777707700077007777700000000000000000000000000000000000000000000000008008008
+07770077000007777077077007770000770007770000700077000777707700077007777700077000000000000000000000000000000000000000000000800080
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 07777077777007777077777007777077777777007777007777000777700777700777777770777700000000000000000000000000000000000000000000000000
-77777777777777777777777777777777777777007777007777000777700777700777777777777770000000000000000000000000000000000000000000000000
-77007777007777007777007777000000770077007777007777000777707777700770007777700770000000000000000000000000000000000000000000000000
-77007777007777007777007777777000770077007777007777000770777707777770077700007770000000000000000000000000000000000000000000000000
-77007777777777007777777007777700770077007777007777070770777700777700777000077700000000000000000000000000000000000000000000000000
+77777777777777777777777777777777777777007777007777000777700777700777777777777770000000000000000000000000000000000000000000800080
+77007777007777007777007777000000770077007777007777000777707777700770007777700770000000000000000000000000000000000000000008008008
+77007777007777007777007777777000770077007777007777000770777707777770077700007770000000000000000000000000000000000000000000008000
+77007777777777007777777007777700770077007777007777070770777700777700777000077700000000000000000000000000000000000000000000008000
 77007777777077007777777700007700770077007777007777777777777770077007770000077000000000000000000000000000000000000000000000000000
 77007777000077077077077777007700770077007707777077777777770770077007700000000000000000000000000000000000000000000000000000000000
 77777777000077777777007777777700770077777707777077707777700770077007777770077000000000000000000000070000000000000000000000000000
