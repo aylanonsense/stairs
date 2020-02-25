@@ -14,17 +14,24 @@ __lua__
 -- useful no-op function
 function noop() end
 
+local last_step = 3
+local is_ending_game = false
+local game_end_countdown = 0
+local stair_color = 4
+local stair_offcolor = 2
+
 -- constants
 local controllers = { 1, 0 }
 local level = {
   [3] = { { "text", "to move" } },
-  [4] = { { "text", "use arrow keys" } },
-  [6] = { { "gem", 4, 1 } },
-  [8] = { { "text", "collect gems" } },
-  [9] = { { "gem", 2, 3 } },
-  [11] = { { "gem", 5, 4 } },
-  [12] = { { "text", "get to the top" } },
-  [13] = { { "gem", false, 2 } },
+  -- [4] = { { "text", "use arrow keys" } },
+  -- [6] = { { "gem", 4, 1 } },
+  -- [8] = { { "text", "collect gems" } },
+  -- [9] = { { "gem", 2, 3 } },
+  -- [11] = { { "gem", 5, 4 } },
+  -- [12] = { { "text", "get to the top" } },
+  -- [13] = { { "gem", false, 2 } },
+  [5] = { { "door" }, { "text", "will you marry me?", 7, true } }
 }
 
 -- character lookup
@@ -64,7 +71,7 @@ local entity_classes = {
       self.state_frames = self.state_frames + 1
       local other_shoe = shoes[3 - self.player_num]
       -- press keys to step up stairs
-      if stair_positions and self.state == "ready" then
+      if stair_positions and self.state == "ready" and steps < last_step then
         local stair
         local segment
         -- move up
@@ -136,10 +143,10 @@ local entity_classes = {
     end,
     step = function(self, stair, segment)
       self:set_state("stepping")
-      local starting_stair_position = stair_positions[self.stair][self.segment]
+      local starting_stair_position = stair_positions[self.stair].segments[self.segment]
       self.stair = stair
       self.segment = segment
-      local ending_stair_position = stair_positions[self.stair][self.segment]
+      local ending_stair_position = stair_positions[self.stair].segments[self.segment]
       self.offset_x = ending_stair_position.x - starting_stair_position.x
       self.offset_y = ending_stair_position.y - starting_stair_position.y
     end
@@ -236,25 +243,93 @@ local entity_classes = {
   },
   gem = {
     gem_type = nil,
+    has_been_collected = false,
+    collect_frames = 0,
+    offset_y = 0,
+    update = function(self)
+      if self.has_been_collected then
+        self.collect_frames += 1
+        self.offset_y += -3 + 0.3 * self.collect_frames
+        if self.collect_frames > 14 then
+          self:despawn()
+        end
+      end
+    end,
     draw = function(self, x, y)
-      x -= 4.5
-      y -= 7.5
-      sspr(86 + 9 * (self.gem_type - 1), (y > 58) and 106 or 94, 9, 12, x, y)
+      x += -4.5
+      y += -7.5 + self.offset_y
+      local sprite
+      if self.has_been_collected then
+        sprite = (self.collect_frames % 4 < 2) and 1 or 2
+      elseif y > 58 then
+        sprite = 4
+      else
+        sprite = 3
+      end
+      sspr(86 + 9 * (self.gem_type - 1), 70 + 12 * (sprite - 1), 9, 12, x, y)
     end,
     collect = function(self)
-      score += 1
-      self:despawn()
+      if not self.has_been_collected then
+        score += 1
+        self.has_been_collected = true
+        self.offset_y = -12
+      end
     end
   },
   stair_text = {
     render_layer = 3,
     color = 7,
     segment = 3,
+    is_special = false,
     draw = function(self, x, y)
-      local scale = (12.4 - 1.2 * self.stair) / 10
-      local width = draw_text(self.text, 63, y + 12.5 * scale, 6 - self.stair, true)
-      pal(7, self.color)
-      draw_text(self.text, 65 - width / 2, y + 12.5 * scale, 6 - self.stair, false)
+      if not self.is_special or (is_ending_game and game_end_countdown > 350) then
+        local scale = (12.4 - 1.2 * self.stair) / 10
+        local width = draw_text(self.text, 63, y + 12.5 * scale, 6 - self.stair, true)
+        if self.is_special then
+          if game_end_countdown > 380 then
+            pal(7, 7)
+          elseif game_end_countdown > 370 then
+            pal(7, 6)
+          elseif game_end_countdown > 360 then
+            pal(7, 5)
+          else
+            pal(7, 1)
+          end
+        else
+          pal(7, self.color)
+        end
+        draw_text(self.text, 65 - width / 2, y + 12.5 * scale, 6 - self.stair, false)
+      end
+    end
+  },
+  door = {
+    segment = 1,
+    open_amount = 93,
+    update = function(self)
+      if is_ending_game and game_end_countdown > 25 then
+        self.open_amount = max(0, self.open_amount - 0.5)
+      end
+    end,
+    draw = function(self, x, y)
+      local stair = stair_positions[self.stair]
+      if stair_positions[self.stair] then
+        local left = stair_positions[self.stair].top_left_x + 1
+        local right = stair_positions[self.stair].top_right_x - 1
+        local y = stair_positions[self.stair].top_y - 2
+        rectfill(left, 0, right, y, 2)
+        if self.open_amount < 93 then
+          sspr(0, 72, 86, 56, 21, 13)
+        end
+        rectfill(left + (93 - self.open_amount) ^ 2 / 93, 0, right, y, stair_offcolor)
+        rect(left, 0, right, y, stair_color)
+        if game_end_countdown > 275 then
+          pal(12, 0)
+          sspr((self.frames_alive % 8 < 4) and 86 or 101, 118, 15, 10, 48, 55)
+          if game_end_countdown < 285 then
+            sspr(122, 110, 6, 8, 42, 50)
+          end
+        end
+      end
     end
   }
 }
@@ -287,6 +362,11 @@ function _init()
 end
 
 function _update()
+  if game_end_countdown == 100 then
+    stair_color, stair_offcolor = 2, 1
+  elseif game_end_countdown == 175 then
+    stair_color, stair_offcolor = 1, 0
+  end
   -- update timer
   timer_frames -= 1
   if timer_frames <= 0 then
@@ -296,6 +376,10 @@ function _update()
       timer_seconds = 0
       timer_frames = 0
     end
+  end
+
+  if is_ending_game then
+    game_end_countdown += 1
   end
 
   -- keep track of button presses
@@ -319,6 +403,10 @@ function _update()
       if entity.stair then
         entity.stair -= 1
       end
+    end
+    if steps == last_step then
+      game_end_countdown = 0
+      is_ending_game = true
     end
     load_level_step(steps + 5)
   end
@@ -344,7 +432,7 @@ function _draw()
 
   -- draw vertical purple stripes for the walls
   for x = 1, 127, 2 do
-    line(x + (x > 64 and 1 or 0), 0, x + (x > 64 and 1 or 0), 128, 2)
+    line(x + (x > 64 and 1 or 0), 0, x + (x > 64 and 1 or 0), 128, stair_offcolor)
   end
 
   -- draw the stairs and record their visual positions
@@ -353,7 +441,6 @@ function _draw()
   local bottom_width, bottom_y
   for y = flr(stair_offset_y), 0, -1 do
     -- each stair has six segments running horizontally
-    local segments = {}
     local width_2, rise_left_2 = calc_stair_size(y)
     -- advance up each stair
     if rise_left > 0 then
@@ -376,21 +463,32 @@ function _draw()
         local bottom_left_x = 64 - bottom_width / 2
         local top_right_x = 64 + top_width / 2 + 1
         local bottom_right_x = 64 + bottom_width / 2
+        local stair = {
+          top_y = top_y,
+          top_left_x = top_left_x,
+          top_right_x = top_right_x,
+          bottom_y = bottom_y,
+          bottom_left_x = bottom_left_x,
+          bottom_right_x = bottom_right_x,
+          top_width = top_width,
+          bottom_width = bottom_width,
+          segments = {}
+        }
         -- draw the lines between stair segments
         for p = 1 / 6, 5.5 / 6, 1 / 6 do
-          line(top_left_x + (top_right_x - top_left_x) * p, top_y, bottom_left_x + (bottom_right_x - bottom_left_x) * p, bottom_y, 2)
+          line(top_left_x + (top_right_x - top_left_x) * p, top_y, bottom_left_x + (bottom_right_x - bottom_left_x) * p, bottom_y, stair_offcolor)
         end
         -- record segment positions
         local middle_y = (top_y + bottom_y) / 2
         local middle_left_x = (top_left_x + bottom_left_x) / 2
         local middle_right_x = (top_right_x + bottom_right_x) / 2
         for p = 1 / 12, 5.5 / 6, 1 / 6 do
-          add(segments, {
+          add(stair.segments, {
             x = middle_left_x + (middle_right_x - middle_left_x) * p,
             y = middle_y
           })
         end
-        add(stair_positions, segments)
+        add(stair_positions, stair)
         bottom_width = nil
         bottom_y = nil
       end
@@ -402,14 +500,14 @@ function _draw()
     -- draw the purple part of the stairs
     if rise_left > 0 then
       line(left_x, y, right_x, y, 0)
-      pset(left_x, y, 2)
-      pset(right_x, y, 2)
+      pset(left_x, y, stair_offcolor)
+      pset(right_x, y, stair_offcolor)
       if rise_left <= 2 then
-        line(left_x, y, right_x, y, 2)
+        line(left_x, y, right_x, y, stair_offcolor)
       end
     -- draw the brown part of the stairs
     else
-      line(left_x, y, right_x, y, 4)
+      line(left_x, y, right_x, y, stair_color)
     end
   end
 
@@ -418,7 +516,7 @@ function _draw()
     if not entity.stair then
       entity:draw(0, 0)
     elseif stair_positions[entity.stair] then
-      local position = stair_positions[entity.stair][entity.segment]
+      local position = stair_positions[entity.stair].segments[entity.segment]
       local x, y = position.x, position.y
       pal()
       entity:draw(x, y)
@@ -429,18 +527,20 @@ function _draw()
   -- draw black bar along the top
   rectfill(0, 0, 127, 12, 0)
 
-  -- draw the score
-  local score_text = (score == 0 and "0" or score .. "00")
-  print(score_text, 127 - 4 * #score_text, 4, 7)
+  if not is_ending_game then
+    -- draw the score
+    local score_text = (score == 0 and "0" or score .. "00")
+    print(score_text, 127 - 4 * #score_text, 4, 7)
 
-  -- draw the number of steps taken so far
-  local step_text = steps .. " steps"
-  print(step_text, 2, 4, 7)
+    -- draw the number of steps taken so far
+    local step_text = steps .. " steps"
+    print(step_text, 2, 4, 7)
 
-  -- draw the timer
-  local timer_text = (timer_seconds < 10 and "0" or "") .. timer_seconds .. "." .. min(9, flr(10 * timer_frames / 30))
-  print(timer_text, 62 - 2 * #timer_text, 4, 7)
-  sspr(116, 118, 7, 7, 71, 3)
+    -- draw the timer
+    local timer_text = (timer_seconds < 10 and "0" or "") .. timer_seconds .. "." .. min(9, flr(10 * timer_frames / 30))
+    print(timer_text, 62 - 2 * #timer_text, 4, 7)
+    sspr(116, 118, 7, 7, 71, 3)
+  end
 end
 
 function load_level_step(step)
@@ -457,7 +557,12 @@ function load_level_step(step)
         spawn_entity("stair_text", {
           text = action[2],
           stair = stair,
-          color = action[3] or 7
+          color = action[3] or 7,
+          is_special = action[4]
+        })
+      elseif action[1] == "door" then
+        spawn_entity("door", {
+          stair = stair
         })
       end
     end
@@ -732,28 +837,28 @@ __gfx__
 77007777777777007777777007777700770077007777007777070770777700777700777000077700000000000000000000000000000000000000000000000000
 77007777777077007777777700007700770077007777007777777777777770077007770000077000000000000000000000000000000000000000000000000000
 77007777000077077077077777007700770077007707777077777777770770077007700000000000000000000000000000000000000000000000000000000000
-77777777000077777777007777777700770077777707777077707777700770077007777770077000000000000000000000000000000000000000000000000000
-07777077000007777777007707777000770007777000770077000777700770077007777770077000000000000000000000000000000000000000000000000000
-fc777777777777cffcfc77777777fcfcfccc7c777f7777777fffccfcfc7777c77ccfc777f7ffffccfcfcff000000000000000000000000000000000000000000
-77777c777c7cfcc7cfcfff777fcfcfccc7c7c777f7fc777cfcfcfcccc777fff7ff77777f7f7f7fffcfcffc000000000000000000000000000000000000000000
-7777c7c7c7fccf7cff7c7ccccc7ccccccc7777f77fcf7fcfcfcfcccc7c7f7c7fcf77ccfffcccfccccccccc000000000000000000000000000000000000000000
-c77c7c7ccccfcfcfcfccccccccccc7c7777f7f7ff7fcfcfcccfcc7777777c7f7f77cfcfcfcfcc77c7cfcff000000000000000000000000000000000000000000
-7cfcccc7fcccc7fcfcccc777777c77f777c7ffffcccccfcfcc777c7777cccc7ffccc7cc777c777ffcfcffc000000000000000000000000000000000000000000
-ffcc7fff77777ccccc7777777cf7c7c7ccccccccfccc777f77c7c7cfc77c77cc7fcfcffc77777ffcffffcc000000000000000000000000000000000000000000
-c7777fc777c77c77777f7ff7cfcc7cc77cc77ccccc777c77fcfcfcc777f7ccc77cf7fccfccfcffcfccc779000000000000000000000000000000000000000000
-777cfcffcfcc7cf7c7f7cc7cfcfcc77ccc7777cfc777cffccccc777c77cc7777fccc7776cfcfcffff7779d000000000000000000000000000000000000000000
+77777777000077777777007777777700770077777707777077707777700770077007777770077000000000000000000000070000000000000000000000000000
+07777077000007777777007707777000770007777000770077000777700770077007777770077000000000000000000000777000007777000000000000000000
+fc777777777777cffcfc77777777fcfcfccc7c777f7777777fffccfcfc7777c77ccfc777f7ffffccfcfcff007777700000777000077777700077777700000000
+77777c777c7cfcc7cfcfff777fcfcfccc7c7c777f7fc777cfcfcfcccc777fff7ff77777f7f7f7fffcfcffc077777770007777700077777700077777700000000
+7777c7c7c7fccf7cff7c7ccccc7ccccccc7777f77fcf7fcfcfcfcccc7c7f7c7fcf77ccfffcccfccccccccc077777770007777700077777700077777700000000
+c77c7c7ccccfcfcfcfccccccccccc7c7777f7f7ff7fcfcfcccfcc7777777c7f7f77cfcfcfcfcc77c7cfcff077777770007777700077777700077777700000000
+7cfcccc7fcccc7fcfcccc777777c77f777c7ffffcccccfcfcc777c7777cccc7ffccc7cc777c777ffcfcffc077777770007777700077777700077777700000000
+ffcc7fff77777ccccc7777777cf7c7c7ccccccccfccc777f77c7c7cfc77c77cc7fcfcffc77777ffcffffcc007777700007777700077777700077777700000000
+c7777fc777c77c77777f7ff7cfcc7cc77cc77ccccc777c77fcfcfcc777f7ccc77cf7fccfccfcffcfccc779000777000007777700077777700077777700000000
+777cfcffcfcc7cf7c7f7cc7cfcfcc77ccc7777cfc777cffccccc777c77cc7777fccc7776cfcfcffff7779d000070000000777000007777000077777700000000
 77cfcfccfcffcf7c7fffcfcccccc7ccfc777677cfcfcffccc7c77777ff7c7fcfccc7776666fcfcf7777665000000000000000000000000000000000000000000
 cccc777777ccfcffc7cccccccccccccc77776d9cccffcccc777f7cffc7cffcfcc77769d656ddfff7776655000000000000000000000000000000000000000000
-fcf777767977cccc7ccccc7c7777cccc77777d66cfccccc7c7c7cf7cffffcfccf77696655d5dddff7ed5d5000000000000000000000000000000000000000000
-777f6f69696796cccc7c7777fcf7ffcf67777f95dccff77c7cc7c7ccc7ccccff776dfe5d55555ddd79dd55000000000000000000000000000000000000000000
-7777766dfdf66dddc7c77cffccccccf7d9d677d559fffccccccc7cc7c7cc77f77dd9e5d5dfd55ddf7ed5d5000000000000000000000000000000000000000000
-777695965d5dd555ddfcccccccfc9fed675d775d5dccc7c77ccccc7c7cc77f79d577d555df55d5fd9e5d55000000000000000000000000000000000000000000
-fe95d5d5d5557655555cfccfcfc9fe7d775df7f555777ccccc7cc7cccc777fdd57e9d55ddf955ddfedd555000000000000000000000000000000000000000000
-7e66565d55d767fd5d555cfcfc9fe9d9795d67df555ccccc79ccfcfcc77e955f77edd55d57ed55ddeddd5d000000000000000000000000000000000000000000
-ed9ddf55dd776dddd5d555cffe779df77d5ddffdd55c7777669fccccc7fef5f7fe9555ddf77ed55dfd7d55000000000000000000000000000000000000000000
-69dd55d5d775dfd65d55555fef9dd7799555fdf6d55f77e665ddffcff7eddf9df9555d5df97f9d5ddf77d5000000000000000000000000000000000000000000
-fdd5555d77dd5ddf55ddf555fddff7f5df55ddff5d55fe9d555dddfd7fedf9d59d5555d5d7979d55dfdfdd000000000000000000000000000000000000000000
-dd5d5d9f7f55ddf95ddff555ddfe7f95d555dddddf5559d555d55dd79ed55d5d5d55d55d7777fed5ddfffd000000000000000000000000000000000000000000
+fcf777767977cccc7ccccc7c7777cccc77777d66cfccccc7c7c7cf7cffffcfccf77696655d5dddff7ed5d5000000000000070000000000000000000000000000
+777f6f69696796cccc7c7777fcf7ffcf67777f95dccff77c7cc7c7ccc7ccccff776dfe5d55555ddd79dd55000000000000707000077777700000000000000000
+7777766dfdf66dddc7c77cffccccccf7d9d677d559fffccccccc7cc7c7cc77f77dd9e5d5dfd55ddf7ed5d5077777770007007700700007770777777770000000
+777695965d5dd555ddfcccccccfc9fed675d775d5dccc7c77ccccc7c7cc77f79d577d555df55d5fd9e5d55700070777007007700700077770700077770000000
+fe95d5d5d5557655555cfccfcfc9fe7d775df7f555777ccccc7cc7cccc777fdd57e9d55ddf955ddfedd555700700777070070770700707770700707770000000
+7e66565d55d767fd5d555cfcfc9fe9d9795d67df555ccccc79ccfcfcc77e955f77edd55d57ed55ddeddd5d707000777070700770707007770707007770000000
+ed9ddf55dd776dddd5d555cffe779df77d5ddffdd55c7777669fccccc7fef5f7fe9555ddf77ed55dfd7d55070007770077000770770007770770007770000000
+69dd55d5d775dfd65d55555fef9dd7799555fdf6d55f77e665ddffcff7eddf9df9555d5df97f9d5ddf77d5007077700070000770700007770700007770000000
+fdd5555d77dd5ddf55ddf555fddff7f5df55ddff5d55fe9d555dddfd7fedf9d59d5555d5d7979d55dfdfdd000777000007007700700007770700007770000000
+dd5d5d9f7f55ddf95ddff555ddfe7f95d555dddddf5559d555d55dd79ed55d5d5d55d55d7777fed5ddfffd000070000000777000077777700777777770000000
 f5d59f77955ddd955ddf55255fe7fd5fd5d55ddd5dd555d55d5ff97fd5d7f555dd5555dd979777fddddf9d000000000000000000000000000000000000000000
 dd59767ed555df95555d525fd6f7555f5dd5dddf55d5555ddff99dfdfd7775df95555ddf7f7f7f7fddf9dd000000000000000000000000000000000000000000
 55d7ffef555d55555d5d555df7e955dddd5d5f7f5555dd55fd5d9dd5df7fd599d55d5df9f9f9f7f9d5fddf000000000000000000000000000000000000000000
@@ -772,14 +877,14 @@ bbaba33bbbaaab3bbabbbbbbabbb33bab3babaaab3b33333bbbbba34333aabba3baa9949aa9b3ab3
 3b3b33b3bbbababbbbb3bbbbbbb3b343bb3b3bbb3b3b333b3a3b3b3b3bb3bbbbbbb9a4aa9bb3bbbbb3bb3b00000000000077700007777b700000000000000000
 33b333bbb3bbbbbbb3bb33b3bb33bb34b3bbab3ab33333b333b3b3bbbb3bbb3b3aaaaaaa99bb33b3bb3bb30777778700077cc70077bbbbb70777777af0000000
 bbb5b3b3bb3abbba3b33b3b3b3bb33343b3bbbbb3333333bbbaabababba3b3bbbaaa9aa99b3bbb333bb333787ee8ee70077ccc007b7bbbbb0777aaaaa0000000
-aabbbbbb33bb3bbbb33b3b3b3bb3333abaab3b33a3b3aabaaabaabbba3b3bbbbbba9ba93bbbb3bb3b3bb337e878eeee07ccccc7077bbbbbb077a7aaaa0000000
-bbbaabbbbbbbb33b33b33bb3b333babbabbab3333b3aababaaaabab3bb3bbb3b3bbb33b33b33333333bbb38888888880c7ccccc07bbbb7b307a7aaaaa0000000
-abbabbbbbb3b3b333b3bb3b3333b3bbaaab3bb3ba3b3bbabbabbbbbbbb3bb3aaaa39b3b33333bbbb333bb308e8888800c7cccc107bbbb7b3077aaaaa90000000
-ababbbabb3b3333b3b3b333349b3ba3bba3b3bb3bbbabb3bbbb3bbaab3baaa49a9aa93b3bb3bb3bbb333bb008e888000cccccc107bbbbbb307aaafaa90000000
-bbbbbbbbbb3b33b3b3b33349bbb33bbb3bbbbb3b3b3b3bb3b3bbba4aabbaa99449aa93b3bb3b333bbb33bb000888000001cc1100bbbbbb330aaa9aa990000000
-abb3bb3b33b3b33b3333344bb33bb3b3b3b33b33a3a3b3babbbbba49abbbaabaa9b9bbb3b33b3333bbb3bb0222822200021112000bb333300fa9999990000000
+aabbbbbb33bb3bbbb33b3b3b3bb3333abaab3b33a3b3aabaaabaabbba3b3bbbbbba9ba93bbbb3bb3b3bb337e878eeee07ccccc7077bbbbbb077a7aaaa0000070
+bbbaabbbbbbbb33b33b33bb3b333babbabbab3333b3aababaaaabab3bb3bbb3b3bbb33b33b33333333bbb38888888880c7ccccc07bbbb7b307a7aaaaa0000070
+abbabbbbbb3b3b333b3bb3b3333b3bbaaab3bb3ba3b3bbabbabbbbbbbb3bb3aaaa39b3b33333bbbb333bb308e8888800c7cccc107bbbb7b3077aaaaa90700007
+ababbbabb3b3333b3b3b333349b3ba3bba3b3bb3bbbabb3bbbb3bbaab3baaa49a9aa93b3bb3bb3bbb333bb008e888000cccccc107bbbbbb307aaafaa90070007
+bbbbbbbbbb3b33b3b3b33349bbb33bbb3bbbbb3b3b3b3bb3b3bbba4aabbaa99449aa93b3bb3b333bbb33bb000888000001cc1100bbbbbb330aaa9aa990007000
+abb3bb3b33b3b33b3333344bb33bb3b3b3b33b33a3a3b3babbbbba49abbbaabaa9b9bbb3b33b3333bbb3bb0222822200021112000bb333300fa9999990000700
 bbbbbbb3b3b33b3333344ab3b3b3bb3bb3bbbbbbbaabbbbababbbaaa3b33bbbaaabb33b3bbb3333bbbb333222222222022222220222222220222222220000000
-bb3b3b3b3b33333333444b3b3b3bbbb3bbbbb3bbbbabbbbabbaab33bb3bbb3bbbbb333b3bbbb333b3bbb33022222220002222200022222200222222220000000
+bb3b3b3b3b33333333444b3b3b3bbbb3bbbbb3bbbbabbbbabbaab33bb3bbb3bbbbb333b3bbbb333b3bbb33022222220002222200022222200222222220777700
 bbbbbbb3b33b333344a4bb33b3b3bbbbbab3bbb3abbbabaaaaaa3b33b33b3b3bb33b33b33b333b3b33b3330000000000000000000000000000c0007770000000
 bbb3b3bb3333333494bbbb3b3bbb3b3bbbbbbbbaaabaaabab3333b33b3bb3b3bb3333b333b3b3b3b33b333001cc000000cc00001cc00000000cc070707000000
 b3bb3bb333333349943b33bbbbbbbbbbaaaabbbbaaaaaab33bbb3b33b33b3b3bb3333bb3333b3b3bb3bb33cccccc000000cc0cccccc000000ccc700700700000
